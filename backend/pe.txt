@@ -1,0 +1,16 @@
+
+authentication
+chat with ai
+chat history
+message storage
+ai with internet research feature
+
+
+
+user=> id, username, password, createdat, updatedat
+
+
+chat=> id, user,title,createdat,updatedat
+
+
+message=> id, chat, content , role: [user,ai ]
