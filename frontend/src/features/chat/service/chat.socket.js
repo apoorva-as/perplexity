@@ -1,9 +1,10 @@
 import { io } from "socket.io-client";
 
+const API_BASE_URL = import.meta.env.VITE_API_URL;
 
 export const initializeSocketConnection = () => {
 
-    const socket = io("http://localhost:3000", {
+    const socket = io(API_BASE_URL, {
         withCredentials: true,
     })
 

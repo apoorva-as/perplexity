@@ -7,22 +7,24 @@ import cors from "cors";
 
 const app = express();
 
+const isAllowedOrigin = (origin) => {
+  if (!origin) return true;
+
+  const isLocal = /^http:\/\/(localhost|127\.0\.0\.1|\[::1\]):\d+$/.test(origin);
+  const isVercel = /^https:\/\/.+\.vercel\.app$/.test(origin);
+
+  return isLocal || isVercel;
+};
+
 // Middleware
+app.set("trust proxy", 1);
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
 app.use(morgan("dev"));
 app.use(cors({
   origin: (origin, callback) => {
-    if (!origin) return callback(null, true);
-
-    // allow localhost
-    const isLocal = /^http:\/\/(localhost|127\.0\.0\.1|\[::1\]):\d+$/.test(origin);
-
-    // allow vercel frontend
-    const isVercel = origin.endsWith(".vercel.app");
-
-    if (isLocal || isVercel) {
+    if (isAllowedOrigin(origin)) {
       return callback(null, true);
     }
 
@@ -40,3 +42,4 @@ app.use("/api/auth", authRouter);
 app.use("/api/chats", chatRouter);
 
 export default app;
+export { isAllowedOrigin };

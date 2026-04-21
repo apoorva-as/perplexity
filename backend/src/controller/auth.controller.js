@@ -1,6 +1,17 @@
 import userModel from "../models/user.model.js";
 import jwt from "jsonwebtoken";
 
+function getCookieOptions(req) {
+    const origin = req.get("origin") || "";
+    const isCrossSite = /^https:\/\/.+\.vercel\.app$/.test(origin);
+
+    return {
+        httpOnly: true,
+        sameSite: isCrossSite ? "none" : "lax",
+        secure: isCrossSite,
+        maxAge: 7 * 24 * 60 * 60 * 1000
+    };
+}
 
 /**
  * @desc Register a new user
@@ -31,11 +42,7 @@ export async function register(req, res) {
         username: user.username,
     }, process.env.JWT_SECRET, { expiresIn: '7d' })
 
-    res.cookie("token", token, {
-        httpOnly: true,
-        sameSite: "lax",
-        maxAge: 7 * 24 * 60 * 60 * 1000
-    })
+    res.cookie("token", token, getCookieOptions(req))
 
     res.status(201).json({
         message: "User registered successfully",
@@ -84,11 +91,7 @@ export async function login(req, res) {
         username: user.username,
     }, process.env.JWT_SECRET, { expiresIn: '7d' })
 
-    res.cookie("token", token, {
-        httpOnly: true,
-        sameSite: "lax",
-        maxAge: 7 * 24 * 60 * 60 * 1000
-    })
+    res.cookie("token", token, getCookieOptions(req))
 
     res.status(200).json({
         message: "Login successful",
