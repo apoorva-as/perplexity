@@ -13,21 +13,23 @@ app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
 app.use(morgan("dev"));
 app.use(cors({
-    origin: (origin, callback) => {
-        if (!origin) {
-            return callback(null, true);
-        }
+  origin: (origin, callback) => {
+    if (!origin) return callback(null, true);
 
-        const isLocalDevOrigin = /^http:\/\/(localhost|127\.0\.0\.1|\[::1\]):\d+$/.test(origin);
-        if (isLocalDevOrigin) {
-            return callback(null, true);
-        }
+    // allow localhost
+    const isLocal = /^http:\/\/(localhost|127\.0\.0\.1|\[::1\]):\d+$/.test(origin);
 
-        return callback(new Error("Not allowed by CORS"));
-    },
-    credentials: true,
-    methods: [ "GET", "POST", "PUT", "DELETE" ],
-}))
+    // allow vercel frontend
+    const isVercel = origin.endsWith(".vercel.app");
+
+    if (isLocal || isVercel) {
+      return callback(null, true);
+    }
+
+    return callback(new Error("Not allowed by CORS"));
+  },
+  credentials: true,
+}));
 
 // Health check
 app.get("/", (req, res) => {
