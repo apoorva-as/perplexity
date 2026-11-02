@@ -1,26 +1,19 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
-import ReactMarkdown from "react-markdown";
-import { useDispatch } from "react-redux";
-import { useSelector } from "react-redux";
-import remarkGfm from "remark-gfm";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useDispatch, useSelector } from "react-redux";
+import { useNavigate } from "react-router";
+import { useAuth } from "../../auth/hook/useAuth";
+import { AlertIcon, BrandMark, CheckIcon, CloseIcon, MenuIcon, NewChatIcon, ShareIcon } from "../../../shared/components/Icons";
+import { useCopyToClipboard } from "../../../shared/hooks/useCopyToClipboard";
+import { useTheme } from "../../../shared/hooks/useTheme";
+import { setCurrentChatId, setError } from "../chat.slice";
+import ConversationView from "../components/ConversationView";
+import HistoryView from "../components/HistoryView";
+import HomeView from "../components/HomeView";
+import Sidebar from "../components/Sidebar";
 import { useChat } from "../hooks/useChat";
-import { setCurrentChatId } from "../chat.slice";
+import { buildShareText, cleanDisplayText } from "../utils/chat.utils";
 
-const categoryPrompts = {
-  search: [
-    "Trending Tech",
-    "Startups",
-    "AI Tools",
-    "Gadgets",
-  ],
-  chats: [
-    "Productivity",
-    "Saved Threads",
-    "Research Notes",
-    "Team Updates",
-  ]
- 
-};
+const categoryPrompts = ["Trending Tech", "Startups", "AI Tools", "Gadgets"];
 
 const starterPrompts = [
   "Summarize this: Tech News | Today's Latest Technology News - Reuters",
@@ -28,55 +21,34 @@ const starterPrompts = [
   "What are the top 5 programming news today?",
 ];
 
-const formatTime = (value) => {
-  if (!value) return "Just now";
+const COLLAPSE_KEY = "sidebar-collapsed";
 
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "Just now";
-
-  return new Intl.DateTimeFormat("en-US", {
-    month: "short",
-    day: "numeric",
-  }).format(date);
+const readCollapsed = () => {
+  try {
+    return localStorage.getItem(COLLAPSE_KEY) === "true";
+  } catch {
+    return false;
+  }
 };
-
-const cleanDisplayText = (content = '') =>
-  content
-    .replace(/\\\*/g, '')
-    .replace(/\*\*/g, '')
-    .replace(/\*/g, '')
-    .replace(/"/g, '')
-    .trim();
-
-const buildShareText = (messages = []) =>
-  messages.map((message) => `${message.role === "user" ? "You" : "Perplexity"}: ${cleanDisplayText(message.content)}`).join('');
-
-const Icon = ({ children, className = "h-4 w-4" }) => (
-  <span className={`inline-flex items-center justify-center ${className}`}>{children}</span>
-);
-
-const SidebarButton = ({ active, children, icon, onClick }) => (
-  <button
-    type="button"
-    onClick={onClick}
-    className={`flex w-full items-center gap-3 rounded-2xl px-3 py-3 text-left text-base transition ${
-      active ? "bg-white/8 text-white" : "text-white/65 hover:bg-white/4 hover:text-white"
-    }`}
-  >
-    <Icon>{icon}</Icon>
-    <span>{children}</span>
-  </button>
-);
 
 const Dashboard = () => {
   const chat = useChat();
   const dispatch = useDispatch();
+  const { isLight, toggleTheme } = useTheme();
+  const share = useCopyToClipboard();
+  const { handleLogout } = useAuth();
+  const navigate = useNavigate();
+  const [isLoggingOut, setIsLoggingOut] = useState(false);
+
   const [chatInput, setChatInput] = useState("");
   const [activeTab, setActiveTab] = useState("search");
-  const [showAllChats, setShowAllChats] = useState(false);
-  const [lightMode, setLightMode] = useState(false);
-  const [copied, setCopied] = useState(false);
-  const scrollRef = useRef(null);
+  // Shown optimistically while the AI response is on its way.
+  const [pending, setPending] = useState(null);
+  const [openingChatId, setOpeningChatId] = useState(null);
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const [collapsed, setCollapsed] = useState(readCollapsed);
+  const [threadScrolled, setThreadScrolled] = useState(false);
+  const composerRef = useRef(null);
 
   const chats = useSelector((state) => state.chat.chats);
   const currentChatId = useSelector((state) => state.chat.currentChatId);
@@ -84,16 +56,28 @@ const Dashboard = () => {
   const chatError = useSelector((state) => state.chat.error);
   const user = useSelector((state) => state.auth.user);
 
+  // Mount only: connect the socket and load history once.
   useEffect(() => {
     chat.initializeSocketConnection();
     chat.handleGetChats();
-  }, []);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
-    if (scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    try {
+      localStorage.setItem(COLLAPSE_KEY, String(collapsed));
+    } catch {
+      // Ignore unavailable storage.
     }
-  }, [currentChatId, chats]);
+  }, [collapsed]);
+
+  useEffect(() => {
+    if (!mobileNavOpen) return undefined;
+    const onKeyDown = (event) => {
+      if (event.key === "Escape") setMobileNavOpen(false);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [mobileNavOpen]);
 
   const orderedChats = useMemo(
     () =>
@@ -105,12 +89,31 @@ const Dashboard = () => {
     [chats]
   );
 
-  const currentMessages = chats[currentChatId]?.messages ?? [];
-  const hasActiveConversation = currentMessages.length > 0;
-  const visibleChats = showAllChats ? orderedChats : orderedChats.slice(0, 4);
-  const promptChips = categoryPrompts[activeTab];
-  const selectedTopic = cleanDisplayText(currentChatId ? chats[currentChatId]?.title || "Knowledge" : promptChips[0]);
+  const currentMessages = useMemo(() => chats[currentChatId]?.messages ?? [], [chats, currentChatId]);
+  const showPending =
+    Boolean(pending) && pending.chatId === currentChatId && currentMessages.length === pending.baseCount;
+  const displayedMessages = openingChatId ? [] : currentMessages;
+  const hasConversation = displayedMessages.length > 0 || showPending || Boolean(openingChatId);
+  const isLoadingChats = isLoading && !orderedChats.length && !pending && !openingChatId;
   const username = user?.username || "Guest";
+
+  const conversationTitle = cleanDisplayText(
+    chats[openingChatId || currentChatId]?.title || pending?.text || "New thread"
+  );
+
+  useEffect(() => {
+    const view = activeTab === "chats" ? "Chats" : hasConversation ? conversationTitle : null;
+    document.title = view ? `${view} · Perplexity` : "Perplexity";
+  }, [activeTab, hasConversation, conversationTitle]);
+
+  const focusComposer = useCallback(() => {
+    window.requestAnimationFrame(() => {
+      const el = composerRef.current;
+      if (!el) return;
+      el.focus();
+      el.setSelectionRange(el.value.length, el.value.length);
+    });
+  }, []);
 
   const submitMessage = async (event) => {
     event.preventDefault();
@@ -120,17 +123,28 @@ const Dashboard = () => {
       return;
     }
 
-    await chat.handleSendMessage({
+    setPending({ text: trimmedMessage, chatId: currentChatId, baseCount: currentMessages.length });
+    setChatInput("");
+    setActiveTab("search");
+
+    const success = await chat.handleSendMessage({
       message: trimmedMessage,
       chatId: currentChatId,
     });
-    setChatInput("");
-    setActiveTab("search");
+
+    setPending(null);
+    if (!success) {
+      // Give the user their text back so they can retry.
+      setChatInput((current) => current || trimmedMessage);
+    }
   };
 
   const openChat = async (chatId) => {
-    await chat.handleOpenChat(chatId, chats);
     setActiveTab("search");
+    setMobileNavOpen(false);
+    if (!chats[chatId]?.messages.length) setOpeningChatId(chatId);
+    await chat.handleOpenChat(chatId, chats);
+    setOpeningChatId(null);
   };
 
   const deleteExistingChat = async (event, chatId) => {
@@ -142,333 +156,167 @@ const Dashboard = () => {
     dispatch(setCurrentChatId(null));
     setActiveTab("search");
     setChatInput("");
-    setCopied(false);
+    setMobileNavOpen(false);
+    share.reset();
+    focusComposer();
   };
 
   const prefillPrompt = (prompt) => {
     setChatInput(prompt);
+    focusComposer();
   };
 
-  const copyShareLink = async () => {
-    if (!currentMessages.length || !navigator?.clipboard) {
-      return;
-    }
+  const copyShareLink = () => {
+    if (!currentMessages.length) return;
+    share.copy(buildShareText(currentMessages));
+  };
 
-    await navigator.clipboard.writeText(buildShareText(currentMessages));
-    setCopied(true);
-    window.setTimeout(() => setCopied(false), 1800);
+  const logout = async () => {
+    setIsLoggingOut(true);
+    const success = await handleLogout();
+    if (success) {
+      navigate("/login", { replace: true });
+    } else {
+      setIsLoggingOut(false);
+    }
+  };
+
+  const showSearch = () => {
+    setActiveTab("search");
+    setMobileNavOpen(false);
   };
 
   const toggleChatsPanel = () => {
     setActiveTab((current) => (current === "chats" ? "search" : "chats"));
+    setMobileNavOpen(false);
   };
 
+  const inConversation = activeTab === "search" && hasConversation;
+
   return (
-    <main className={lightMode ? "dashboard-theme light" : "dashboard-theme"}>
-      <section className="dashboard-shell">
-        <aside className="dashboard-sidebar">
-          <div>
-            <SidebarButton active={activeTab === "search"} onClick={() => setActiveTab("search")} icon={<SearchIcon />}>
-              Search
-            </SidebarButton>
-            <SidebarButton active={activeTab === "chats"} onClick={toggleChatsPanel} icon={<HistoryIcon />}>
-              Chats
-            </SidebarButton>
-            
+    <div className="app-shell">
+      <Sidebar
+        activeTab={activeTab}
+        chats={orderedChats}
+        currentChatId={currentChatId}
+        isLoadingChats={isLoadingChats}
+        collapsed={collapsed}
+        mobileOpen={mobileNavOpen}
+        isLight={isLight}
+        username={username}
+        onSearch={showSearch}
+        onChats={toggleChatsPanel}
+        onNewChat={resetConversation}
+        onOpenChat={openChat}
+        onDeleteChat={deleteExistingChat}
+        onToggleTheme={toggleTheme}
+        onToggleCollapse={() => setCollapsed((value) => !value)}
+        onCloseMobile={() => setMobileNavOpen(false)}
+        onLogout={logout}
+        isLoggingOut={isLoggingOut}
+      />
 
-            <button type="button" onClick={resetConversation} className="dashboard-new-chat">
-              <Icon>
-                <PlusIcon />
-              </Icon>
-              <span>New Chat</span>
+      <main className="app-main">
+        <header className={`app-topbar ${inConversation && threadScrolled ? "bordered" : ""}`}>
+          <div className="app-topbar-left">
+            <button
+              type="button"
+              className="icon-btn mobile-only"
+              onClick={() => setMobileNavOpen(true)}
+              aria-label="Open navigation"
+              aria-expanded={mobileNavOpen}
+              aria-controls="app-sidebar"
+            >
+              <MenuIcon size={18} />
             </button>
 
-            <div className="dashboard-recent">
-              <div className="dashboard-recent-header">
-                <span>Recent</span>
-              </div>
-
-              <div className="dashboard-recent-list">
-                {visibleChats.length ? (
-                  visibleChats.map((item) => (
-                    <button
-                      key={item.id}
-                      type="button"
-                      onClick={() => openChat(item.id)}
-                      className={`dashboard-chat-item ${item.id === currentChatId ? "active" : ""}`}
-                    >
-                      <span className="truncate">{cleanDisplayText(item.title)}</span>
-                      <span
-                        role="button"
-                        tabIndex={0}
-                        onClick={(event) => deleteExistingChat(event, item.id)}
-                        onKeyDown={(event) => {
-                          if (event.key === 'Delete' || event.key === 'Backspace') {
-                            deleteExistingChat(event, item.id);
-                          }
-                        }}
-                        className="dashboard-delete"
-                      >
-                        <TrashIcon />
-                      </span>
-                    </button>
-                  ))
-                ) : (
-                  <p className="dashboard-empty-copy"></p>
-                )}
-              </div>
-
-              
-            </div>
+            {inConversation ? (
+              <h1 className="app-topbar-title" title={conversationTitle}>
+                {conversationTitle}
+              </h1>
+            ) : (
+              <span className="app-topbar-title app-topbar-brand mobile-only">
+                <BrandMark size={18} />
+                Perplexity
+              </span>
+            )}
           </div>
 
-          <div className="dashboard-sidebar-footer">
-            <button type="button" onClick={() => setLightMode((value) => !value)} className="dashboard-mode-toggle">
-              <Icon>
-                <SunIcon />
-              </Icon>
-              <span>{lightMode ? "Dark Mode" : "Light Mode"}</span>
+          <div className="app-topbar-right">
+            {inConversation && currentMessages.length > 0 && (
+              <button
+                type="button"
+                onClick={copyShareLink}
+                className="btn btn-secondary"
+                aria-label={share.copied ? "Conversation copied" : "Share conversation"}
+                title="Copy conversation"
+              >
+                {share.copied ? <CheckIcon size={15} /> : <ShareIcon size={15} />}
+                <span>{share.copied ? "Copied" : "Share"}</span>
+              </button>
+            )}
+            <button type="button" className="icon-btn mobile-only" onClick={resetConversation} aria-label="New Chat">
+              <NewChatIcon size={17} />
             </button>
-
-            <div className="dashboard-profile">
-              <div className="dashboard-avatar">{username.slice(0, 1).toUpperCase()}</div>
-              <span>{username}</span>
-            </div>
           </div>
-        </aside>
+        </header>
 
-        <section className="dashboard-content">
-          {!hasActiveConversation ? (
-            <div className="dashboard-home">
-              <div className="dashboard-brand-block">
-                <div className="dashboard-logo-mark">
-                  <SearchIcon />
-                </div>
-                <h1 className="dashboard-brand-wordmark">Perplexity</h1>
-              </div>
+        {activeTab === "chats" ? (
+          <HistoryView
+            chats={orderedChats}
+            currentChatId={currentChatId}
+            isLoading={isLoading}
+            onOpenChat={openChat}
+            onDeleteChat={deleteExistingChat}
+            onNewChat={resetConversation}
+          />
+        ) : hasConversation ? (
+          <ConversationView
+            key={currentChatId || "new"}
+            messages={displayedMessages}
+            pendingMessage={showPending ? pending.text : null}
+            isOpening={Boolean(openingChatId)}
+            input={chatInput}
+            onInputChange={setChatInput}
+            onSubmit={submitMessage}
+            isBusy={isLoading}
+            onAttach={() => prefillPrompt("Create a follow-up based on this answer")}
+            onMic={() => prefillPrompt("Convert this response into a short summary")}
+            composerRef={composerRef}
+            onScrolledChange={setThreadScrolled}
+          />
+        ) : (
+          <HomeView
+            categories={categoryPrompts}
+            suggestions={starterPrompts}
+            input={chatInput}
+            onInputChange={setChatInput}
+            onSubmit={submitMessage}
+            isBusy={isLoading}
+            onPrefill={prefillPrompt}
+            onAttach={() => prefillPrompt(categoryPrompts[0])}
+            onMic={() => prefillPrompt("Use voice input prompt")}
+            composerRef={composerRef}
+          />
+        )}
+      </main>
 
-              <div className="dashboard-category-row">
-                {promptChips.map((chip) => (
-                  <button key={chip} type="button" onClick={() => prefillPrompt(chip)} className="dashboard-chip">
-                    {chip}
-                  </button>
-                ))}
-              </div>
-
-              <form onSubmit={submitMessage} className="dashboard-composer dashboard-composer-home">
-                <textarea
-                  rows={3}
-                  value={chatInput}
-                  onChange={(event) => setChatInput(event.target.value)}
-                  placeholder={
-                    activeTab === "insta" ? "Create an Instagram post idea..." : "Ask anything..."
-                  }
-                  className="dashboard-textarea"
-                />
-                <div className="dashboard-composer-actions">
-                  <button type="button" className="dashboard-round-button" onClick={() => prefillPrompt(promptChips[0])}>
-                    <PlusIcon />
-                  </button>
-
-                  <div className="dashboard-composer-right">
-                    <button type="button" className="dashboard-ghost-icon" onClick={() => prefillPrompt("Use voice input prompt")}>
-                      <MicIcon />
-                    </button>
-                    <button type="submit" disabled={!chatInput.trim() || isLoading} className="dashboard-round-button submit">
-                      <ArrowUpIcon />
-                    </button>
-                  </div>
-                </div>
-              </form>
-
-              <div className="dashboard-suggestion-list">
-                {starterPrompts.map((prompt) => (
-                  <button key={prompt} type="button" onClick={() => prefillPrompt(prompt)} className="dashboard-suggestion">
-                    {prompt}
-                  </button>
-                ))}
-              </div>
-            </div>
-          ) : (
-            <div className="dashboard-result">
-              <div className="dashboard-result-topbar">
-                <div className="dashboard-result-tab">Knowledge</div>
-                <button type="button" onClick={copyShareLink} className="dashboard-share">
-                  <ShareIcon />
-                  <span>{copied ? "Copied" : "Share"}</span>
-                </button>
-              </div>
-
-              <div ref={scrollRef} className="dashboard-message-stream">
-                <div className="dashboard-result-header">
-                  <div className="dashboard-result-topic">{selectedTopic}</div>
-                </div>
-
-                <div className="dashboard-message-list">
-                  {currentMessages.map((message, index) => (
-                    <article
-                      key={`${message.role}-${index}`}
-                      className={`dashboard-message ${message.role === "user" ? "user" : "ai"}`}
-                    >
-                      {message.role === "user" ? (
-                        <p>{message.content}</p>
-                      ) : (
-                        <ReactMarkdown
-                          remarkPlugins={[remarkGfm]}
-                          components={{
-                            p: ({ children }) => <p className="dashboard-markdown-paragraph">{children}</p>,
-                            ul: ({ children }) => <ul className="dashboard-markdown-list">{children}</ul>,
-                            ol: ({ children }) => <ol className="dashboard-markdown-list ordered">{children}</ol>,
-                            li: ({ children }) => <li>{children}</li>,
-                            strong: ({ children }) => <strong className="font-semibold text-white">{children}</strong>,
-                            code: ({ children }) => <code className="dashboard-inline-code">{children}</code>,
-                            pre: ({ children }) => <pre className="dashboard-code-block">{children}</pre>,
-                          }}
-                        >
-                          {cleanDisplayText(message.content)}
-                        </ReactMarkdown>
-                      )}
-                    </article>
-                  ))}
-                </div>
-              </div>
-
-              <div className="dashboard-followup-shell">
-                <button type="button" className="dashboard-scroll-button" onClick={() => scrollRef.current?.scrollTo({ top: 0, behavior: "smooth" })}>
-                  <ArrowDownIcon />
-                </button>
-
-                <form onSubmit={submitMessage} className="dashboard-composer dashboard-composer-followup">
-                  <textarea
-                    rows={3}
-                    value={chatInput}
-                    onChange={(event) => setChatInput(event.target.value)}
-                    placeholder="Ask anything....."
-                    className="dashboard-textarea"
-                  />
-                  <div className="dashboard-composer-actions">
-                    <button type="button" className="dashboard-attach" onClick={() => prefillPrompt("Create a follow-up based on this answer")}>
-                      <PlusIcon />
-                      <span>Attach</span>
-                    </button>
-
-                    <div className="dashboard-composer-right">
-                      <button type="button" className="dashboard-ghost-icon" onClick={() => prefillPrompt("Convert this response into a short summary")}>
-                        <MicIcon />
-                      </button>
-                      <button type="submit" disabled={!chatInput.trim() || isLoading} className="dashboard-round-button submit">
-                        <ArrowUpIcon />
-                      </button>
-                    </div>
-                  </div>
-                </form>
-              </div>
-            </div>
-          )}
-
-          {(isLoading || chatError) && (
-            <div className="dashboard-status">
-              {isLoading ? "Generating response..." : chatError}
-            </div>
-          )}
-
-          {activeTab === "chats" && !hasActiveConversation && orderedChats.length > 0 && (
-            <div className="dashboard-tab-panel">
-              <div className="dashboard-history-title">History</div>
-              {orderedChats.map((item) => (
-                <button key={item.id} type="button" onClick={() => openChat(item.id)} className="dashboard-tab-chat">
-                  <div>
-                    <p>{cleanDisplayText(item.title)}</p>
-                    <span>{formatTime(item.lastUpdated)}</span>
-                  </div>
-                </button>
-              ))}
-            </div>
-          )}
-
-         
-        </section>
-      </section>
-    </main>
+      {chatError && (
+        <div className="toast" role="alert">
+          <AlertIcon size={16} />
+          <span className="toast-text">{chatError}</span>
+          <button
+            type="button"
+            className="icon-btn sm"
+            onClick={() => dispatch(setError(null))}
+            aria-label="Dismiss"
+          >
+            <CloseIcon size={14} />
+          </button>
+        </div>
+      )}
+    </div>
   );
 };
-
-const SearchIcon = () => (
-  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-    <path d="M10.5 3.75 12 8.5l1.5-4.75L15 8.5l4.75-1.5L15 10.5l4.75 1.5L15 13.5l-1.5 4.75L12 13.5l-1.5 4.75L9 13.5 4.25 15 9 12 4.25 10.5 9 8.5l1.5-4.75Z" />
-  </svg>
-);
-
-const HistoryIcon = () => (
-  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-    <path d="M3 12a9 9 0 1 0 3-6.7" />
-    <path d="M3 4v5h5" />
-    <path d="M12 7.5V12l3 1.5" />
-  </svg>
-);
-
-const CameraIcon = () => (
-  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-    <rect x="4" y="4" width="16" height="16" rx="4" />
-    <circle cx="12" cy="12" r="3.5" />
-    <path d="M17.5 6.5h.01" />
-  </svg>
-);
-
-const PlusIcon = () => (
-  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-    <path d="M12 5v14M5 12h14" />
-  </svg>
-);
-
-const TrashIcon = () => (
-  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-    <path d="M4 7h16" />
-    <path d="M9 7V4h6v3" />
-    <path d="M8 10v7" />
-    <path d="M12 10v7" />
-    <path d="M16 10v7" />
-    <path d="M6.5 7l1 12h9l1-12" />
-  </svg>
-);
-
-const SunIcon = () => (
-  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-    <circle cx="12" cy="12" r="4" />
-    <path d="M12 2v2.5M12 19.5V22M4.93 4.93l1.77 1.77M17.3 17.3l1.77 1.77M2 12h2.5M19.5 12H22M4.93 19.07l1.77-1.77M17.3 6.7l1.77-1.77" />
-  </svg>
-);
-
-const MicIcon = () => (
-  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-    <rect x="9" y="3" width="6" height="11" rx="3" />
-    <path d="M6 11a6 6 0 0 0 12 0" />
-    <path d="M12 17v4" />
-  </svg>
-);
-
-const ArrowUpIcon = () => (
-  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-    <path d="m12 19 0-14" />
-    <path d="m7 10 5-5 5 5" />
-  </svg>
-);
-
-const ArrowDownIcon = () => (
-  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-    <path d="M12 5v14" />
-    <path d="m17 14-5 5-5-5" />
-  </svg>
-);
-
-const ShareIcon = () => (
-  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-    <circle cx="18" cy="5" r="2.5" />
-    <circle cx="6" cy="12" r="2.5" />
-    <circle cx="18" cy="19" r="2.5" />
-    <path d="m8.3 11 7.4-4.4" />
-    <path d="m8.3 13 7.4 4.4" />
-  </svg>
-);
 
 export default Dashboard;

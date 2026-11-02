@@ -10,7 +10,7 @@ function App() {
 
   useEffect(() => {
     auth.handleGetMe()
-  }, [])
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps -- run once on mount
 
   return (
     <RouterProvider router={router} />

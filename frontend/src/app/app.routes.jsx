@@ -23,5 +23,10 @@ export const router = createBrowserRouter([
     {
         path: "/dashboard",
         element: <Navigate to="/" replace />
+    },
+    {
+        // Unknown paths go to the dashboard, which sends logged-out users to /login.
+        path: "*",
+        element: <Navigate to="/" replace />
     }
 ])

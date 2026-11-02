@@ -7,39 +7,45 @@ import cors from "cors";
 
 const app = express();
 
-const isAllowedOrigin = (origin) => {
-  if (!origin) return true;
+const allowedOrigins = [
+"https://perplexity-eight-ivory.vercel.app",
+"http://localhost:5173"
+];
 
-  const isLocal = /^http:\/\/(localhost|127\.0\.0\.1|\[::1\]):\d+$/.test(origin);
-  const isVercel = /^https:\/\/.+\.vercel\.app$/.test(origin);
-
-  return isLocal || isVercel;
+export const isAllowedOrigin = (origin) => {
+if (!origin) return true;
+return allowedOrigins.includes(origin);
 };
 
-// Middleware
 app.set("trust proxy", 1);
+
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
 app.use(morgan("dev"));
-app.use(cors({
-  origin: (origin, callback) => {
-    if (isAllowedOrigin(origin)) {
-      return callback(null, true);
-    }
 
+app.use(cors({
+origin: (origin, callback) => {
+if (isAllowedOrigin(origin)) {
+return callback(null, true);
+}
+
+
+    console.log("Blocked origin:", origin);
     return callback(new Error("Not allowed by CORS"));
-  },
-  credentials: true,
+},
+credentials: true,
+methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+allowedHeaders: ["Content-Type", "Authorization"]
+
+
 }));
 
-// Health check
 app.get("/", (req, res) => {
-    res.json({ message: "Server is running" });
+res.json({ message: "Server is running" });
 });
 
 app.use("/api/auth", authRouter);
 app.use("/api/chats", chatRouter);
 
 export default app;
-export { isAllowedOrigin };

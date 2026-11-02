@@ -35,8 +35,10 @@ export const useChat = () => {
                 role: aiMessage.role,
             }))
             dispatch(setCurrentChatId(resolvedChatId))
+            return true
         } catch (error) {
             dispatch(setError(error.response?.data?.message || "Failed to send message"))
+            return false
         } finally {
             dispatch(setLoading(false))
         }

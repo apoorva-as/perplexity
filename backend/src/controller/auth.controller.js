@@ -129,3 +129,21 @@ export async function getMe(req, res) {
         user
     })
 }
+
+
+/**
+ * @desc Logout user by clearing the auth cookie
+ * @route POST /api/auth/logout
+ * @access Public
+ */
+export async function logout(req, res) {
+    // clearCookie needs the same options the cookie was set with (minus maxAge).
+    const { maxAge, ...cookieOptions } = getCookieOptions(req)
+
+    res.clearCookie("token", cookieOptions)
+
+    res.status(200).json({
+        message: "Logged out successfully",
+        success: true
+    })
+}

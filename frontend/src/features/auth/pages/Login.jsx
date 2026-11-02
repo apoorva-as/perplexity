@@ -1,108 +1,118 @@
-import React, { useState } from "react";
-import { Link, Navigate, useNavigate } from "react-router";
+import { useEffect, useState } from "react";
+import { Link, Navigate, useLocation, useNavigate } from "react-router";
 import { useSelector } from "react-redux";
+import { AlertIcon, LockIcon, UserIcon } from "../../../shared/components/Icons";
+import Splash from "../../../shared/components/Splash";
+import { validateLogin } from "../auth.validation";
+import AuthField from "../components/AuthField";
+import AuthLayout from "../components/AuthLayout";
 import { useAuth } from "../hook/useAuth";
 
 const Login = () => {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
+  const [errors, setErrors] = useState({});
+  const [submitting, setSubmitting] = useState(false);
 
   const user = useSelector((state) => state.auth.user);
   const loading = useSelector((state) => state.auth.loading);
   const error = useSelector((state) => state.auth.error);
 
-  const { handleLogin } = useAuth();
+  const { handleLogin, clearError } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
+  const redirectTo = location.state?.from || "/";
+
+  // Don't carry an error over from another auth page.
+  useEffect(() => {
+    clearError();
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const clearFieldError = (field) => {
+    if (errors[field]) setErrors((current) => ({ ...current, [field]: undefined }));
+  };
 
   const submitForm = async (event) => {
     event.preventDefault();
 
-    const success = await handleLogin({ username, password });
-    if (success) navigate("/");
+    const nextErrors = validateLogin({ username, password });
+    setErrors(nextErrors);
+    if (Object.keys(nextErrors).length) return;
+
+    setSubmitting(true);
+    const success = await handleLogin({ username: username.trim(), password });
+    setSubmitting(false);
+    if (success) navigate(redirectTo, { replace: true });
   };
 
   if (!loading && user) {
-    return <Navigate to="/" replace />;
+    return <Navigate to={redirectTo} replace />;
+  }
+
+  // Initial session check (not our own submit): avoid flashing the form for signed-in users.
+  if (loading && !submitting) {
+    return <Splash label="Checking your session..." />;
   }
 
   return (
-    <section className="auth-screen">
-      <div className="auth-shell">
-        <div className="auth-panel brand">
-          <div className="auth-logo">
-            <span className="auth-logo-mark">
-              <BrandIcon />
-            </span>
-            <span>Perplexity</span>
-          </div>
+    <AuthLayout
+      headline="Search, chat, and explore in one focused workspace."
+      description="Ask anything and get clear, sourced answers from across the web, with every conversation saved."
+    >
+      <h2>Welcome back</h2>
+      <p className="auth-card-subtitle">Continue exploring the web with AI-powered search.</p>
 
-          <div className="auth-copy">
-            <h1>Search, chat, and explore in one focused workspace.</h1>
-            <p>
-              Sign in to access your recent conversations, ask follow-up questions, and keep the dashboard layout
-              exactly like the product experience you want.
-            </p>
-          </div>
-
-          <div className="auth-highlights">
-            <span>Real-time search flow</span>
-            <span>Recent chats sidebar</span>
-            <span>Perplexity-style UI</span>
-          </div>
+      {error && (
+        <div className="alert" role="alert">
+          <AlertIcon size={16} />
+          <span>{error}</span>
         </div>
+      )}
 
-        <div className="auth-panel form">
-          <div className="auth-form-shell">
-            <p className="auth-eyebrow">WELCOME BACK</p>
-            <h2>Login to continue</h2>
-            <p>Use your account to open the dashboard and continue your saved chats.</p>
+      <form onSubmit={submitForm} className="auth-form" noValidate>
+        <AuthField
+          id="username"
+          label="Username"
+          icon={UserIcon}
+          value={username}
+          onChange={(event) => {
+            setUsername(event.target.value);
+            clearFieldError("username");
+          }}
+          placeholder="Enter your username"
+          autoComplete="username"
+          autoFocus
+          error={errors.username}
+          required
+        />
 
-            {error && <div className="auth-error">{error}</div>}
+        <AuthField
+          id="password"
+          label="Password"
+          icon={LockIcon}
+          type="password"
+          value={password}
+          onChange={(event) => {
+            setPassword(event.target.value);
+            clearFieldError("password");
+          }}
+          placeholder="Enter your password"
+          autoComplete="current-password"
+          error={errors.password}
+          required
+        />
 
-            <form onSubmit={submitForm} className="auth-form">
-              <div className="auth-field">
-                <label htmlFor="username">Username</label>
-                <input
-                  id="username"
-                  type="text"
-                  value={username}
-                  onChange={(event) => setUsername(event.target.value)}
-                  placeholder="Enter your username"
-                  required
-                />
-              </div>
+        <button type="submit" className="btn btn-primary btn-lg btn-block auth-submit" disabled={submitting}>
+          {submitting && <span className="spinner" aria-hidden="true" />}
+          {submitting ? "Signing in..." : "Log in"}
+        </button>
+      </form>
 
-              <div className="auth-field">
-                <label htmlFor="password">Password</label>
-                <input
-                  id="password"
-                  type="password"
-                  value={password}
-                  onChange={(event) => setPassword(event.target.value)}
-                  placeholder="Enter your password"
-                  required
-                />
-              </div>
-
-              <button type="submit" className="auth-submit">
-                Login
-              </button>
-            </form>
-
-            <p className="auth-footer">
-              Don&apos;t have an account? <Link to="/register">Register</Link>
-            </p>
-          </div>
-        </div>
-      </div>
-    </section>
+      <p className="auth-switch">
+        Don&apos;t have an account? <Link to="/register">Create account</Link>
+      </p>
+    </AuthLayout>
   );
 };
-
-const BrandIcon = () => (
-  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-    <path d="M10.5 3.75 12 8.5l1.5-4.75L15 8.5l4.75-1.5L15 10.5l4.75 1.5L15 13.5l-1.5 4.75L12 13.5l-1.5 4.75L9 13.5 4.25 15 9 12 4.25 10.5 9 8.5l1.5-4.75Z" />
-  </svg>
-);
 
 export default Login;

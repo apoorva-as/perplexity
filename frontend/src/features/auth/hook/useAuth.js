@@ -1,6 +1,11 @@
 import { useDispatch } from "react-redux";
-import { register, login, getMe } from "../service/auth.api";
+import { register, login, getMe, logout } from "../service/auth.api";
 import { setUser, setLoading, setError } from "../auth.slice";
+import { setChats, setCurrentChatId, setError as setChatError } from "../../chat/chat.slice";
+
+// The API returns either { message } or express-validator's { errors: [{ msg }] }.
+const getErrorMessage = (error, fallback) =>
+    error.response?.data?.message || error.response?.data?.errors?.[0]?.msg || fallback
 
 
 export function useAuth() {
@@ -16,7 +21,7 @@ export function useAuth() {
             dispatch(setUser(data.user))
             return true
         } catch (error) {
-            dispatch(setError(error.response?.data?.message || "Registration failed"))
+            dispatch(setError(getErrorMessage(error, "Registration failed")))
             return false
         } finally {
             dispatch(setLoading(false))
@@ -31,7 +36,7 @@ export function useAuth() {
             dispatch(setUser(data.user))
             return true
         } catch (err) {
-            dispatch(setError(err.response?.data?.message || "Login failed"))
+            dispatch(setError(getErrorMessage(err, "Login failed")))
             return false
         } finally {
             dispatch(setLoading(false))
@@ -47,17 +52,39 @@ export function useAuth() {
         } catch (err) {
             // 401 means not logged in, not an error
             if (err.response?.status !== 401) {
-                dispatch(setError(err.response?.data?.message || "Failed to fetch user data"))
+                dispatch(setError(getErrorMessage(err, "Failed to fetch user data")))
             }
         } finally {
             dispatch(setLoading(false))
         }
     }
 
+    async function handleLogout() {
+        try {
+            await logout()
+        } catch (err) {
+            // The cookie may still be set, so stay signed in and show the error in the dashboard toast.
+            dispatch(setChatError(getErrorMessage(err, "Logout failed. Please try again.")))
+            return false
+        }
+        // Drop this account's data so the next user starts clean.
+        dispatch(setChats({}))
+        dispatch(setCurrentChatId(null))
+        dispatch(setChatError(null))
+        dispatch(setUser(null))
+        return true
+    }
+
+    function clearError() {
+        dispatch(setError(null))
+    }
+
     return {
         handleRegister,
         handleLogin,
         handleGetMe,
+        handleLogout,
+        clearError,
     }
 
 }

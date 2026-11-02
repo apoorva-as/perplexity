@@ -1,106 +1,140 @@
-import React, { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link, Navigate, useNavigate } from "react-router";
 import { useSelector } from "react-redux";
+import { AlertIcon, LockIcon, ShieldIcon, UserIcon } from "../../../shared/components/Icons";
+import Splash from "../../../shared/components/Splash";
+import { validateRegister } from "../auth.validation";
+import AuthField from "../components/AuthField";
+import AuthLayout from "../components/AuthLayout";
 import { useAuth } from "../hook/useAuth";
 
 const Register = () => {
-  const [username, setUsername] = useState("");
-  const [password, setPassword] = useState("");
+  const [values, setValues] = useState({ username: "", password: "", confirmPassword: "" });
+  const [errors, setErrors] = useState({});
+  const [submitting, setSubmitting] = useState(false);
 
-  const { handleRegister } = useAuth();
+  const { handleRegister, clearError } = useAuth();
   const navigate = useNavigate();
   const user = useSelector((state) => state.auth.user);
   const loading = useSelector((state) => state.auth.loading);
   const error = useSelector((state) => state.auth.error);
 
+  // Don't carry an error over from another auth page.
+  useEffect(() => {
+    clearError();
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const validateField = (field, nextValues) => {
+    const fieldError = validateRegister(nextValues)[field];
+    setErrors((current) => ({ ...current, [field]: fieldError }));
+  };
+
+  const updateField = (field) => (event) => {
+    const nextValues = { ...values, [field]: event.target.value };
+    setValues(nextValues);
+    // Re-check live only once a field has shown an error.
+    if (errors[field]) validateField(field, nextValues);
+    if (field === "password" && errors.confirmPassword) validateField("confirmPassword", nextValues);
+  };
+
+  const blurField = (field) => () => {
+    if (values[field]) validateField(field, values);
+  };
+
   const submitForm = async (event) => {
     event.preventDefault();
-    const success = await handleRegister({ username, password });
-    if (success) navigate("/");
+
+    const nextErrors = validateRegister(values);
+    setErrors(nextErrors);
+    if (Object.keys(nextErrors).length) return;
+
+    setSubmitting(true);
+    // The API only takes username + password; confirmPassword stays client-side.
+    const success = await handleRegister({ username: values.username.trim(), password: values.password });
+    setSubmitting(false);
+    if (success) navigate("/", { replace: true });
   };
 
   if (!loading && user) {
     return <Navigate to="/" replace />;
   }
 
+  // Initial session check (not our own submit): avoid flashing the form for signed-in users.
+  if (loading && !submitting) {
+    return <Splash label="Checking your session..." />;
+  }
+
   return (
-    <section className="auth-screen">
-      <div className="auth-shell">
-        <div className="auth-panel brand">
-          <div className="auth-logo">
-            <span className="auth-logo-mark">
-              <BrandIcon />
-            </span>
-            <span>Perplexity</span>
-          </div>
+    <AuthLayout
+      headline="Answers from across the web, saved in one place."
+      description="Search with AI, follow up naturally, and pick up any conversation right where you left off."
+    >
+      <h2>Start your search journey</h2>
+      <p className="auth-card-subtitle">Create an account to explore, search, and save your conversations.</p>
 
-          <div className="auth-copy">
-            <h1>Create your account and land directly in the new dashboard.</h1>
-            <p>
-              Register once, then the app opens into the exact black dashboard flow with search, recent chats, and
-              the result layout from your reference images.
-            </p>
-          </div>
-
-          <div className="auth-highlights">
-            <span>Register in seconds</span>
-            <span>Recent chat history</span>
-            <span>Follow-up search view</span>
-          </div>
+      {error && (
+        <div className="alert" role="alert">
+          <AlertIcon size={16} />
+          <span>{error}</span>
         </div>
+      )}
 
-        <div className="auth-panel form">
-          <div className="auth-form-shell">
-            <p className="auth-eyebrow">CREATE ACCOUNT</p>
-            <h2>Start using the dashboard</h2>
-            <p>Pick a username and password to begin searching and saving chats.</p>
+      <form onSubmit={submitForm} className="auth-form" noValidate>
+        <AuthField
+          id="username"
+          label="Username"
+          icon={UserIcon}
+          value={values.username}
+          onChange={updateField("username")}
+          onBlur={blurField("username")}
+          placeholder="Choose a username"
+          autoComplete="username"
+          autoFocus
+          error={errors.username}
+          hint="3–30 characters: letters, numbers, and underscores."
+          required
+        />
 
-            {error && <div className="auth-error">{error}</div>}
+        <AuthField
+          id="password"
+          label="Password"
+          icon={LockIcon}
+          type="password"
+          value={values.password}
+          onChange={updateField("password")}
+          onBlur={blurField("password")}
+          placeholder="Create a password"
+          autoComplete="new-password"
+          error={errors.password}
+          hint="At least 6 characters."
+          required
+        />
 
-            <form onSubmit={submitForm} className="auth-form">
-              <div className="auth-field">
-                <label htmlFor="username">Username</label>
-                <input
-                  id="username"
-                  type="text"
-                  value={username}
-                  onChange={(event) => setUsername(event.target.value)}
-                  placeholder="Choose a username"
-                  required
-                />
-              </div>
+        <AuthField
+          id="confirmPassword"
+          label="Confirm password"
+          icon={ShieldIcon}
+          type="password"
+          value={values.confirmPassword}
+          onChange={updateField("confirmPassword")}
+          onBlur={blurField("confirmPassword")}
+          placeholder="Re-enter your password"
+          autoComplete="new-password"
+          error={errors.confirmPassword}
+          required
+        />
 
-              <div className="auth-field">
-                <label htmlFor="password">Password</label>
-                <input
-                  id="password"
-                  type="password"
-                  value={password}
-                  onChange={(event) => setPassword(event.target.value)}
-                  placeholder="Create a password"
-                  required
-                />
-              </div>
+        <button type="submit" className="btn btn-primary btn-lg btn-block auth-submit" disabled={submitting}>
+          {submitting && <span className="spinner" aria-hidden="true" />}
+          {submitting ? "Creating account..." : "Create account"}
+        </button>
+      </form>
 
-              <button type="submit" className="auth-submit">
-                Register
-              </button>
-            </form>
-
-            <p className="auth-footer">
-              Already have an account? <Link to="/login">Login</Link>
-            </p>
-          </div>
-        </div>
-      </div>
-    </section>
+      <p className="auth-switch">
+        Already have an account? <Link to="/login">Log in</Link>
+      </p>
+    </AuthLayout>
   );
 };
-
-const BrandIcon = () => (
-  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-    <path d="M10.5 3.75 12 8.5l1.5-4.75L15 8.5l4.75-1.5L15 10.5l4.75 1.5L15 13.5l-1.5 4.75L12 13.5l-1.5 4.75L9 13.5 4.25 15 9 12 4.25 10.5 9 8.5l1.5-4.75Z" />
-  </svg>
-);
 
 export default Register;
